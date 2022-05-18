@@ -85,6 +85,10 @@
  */
 #define MDP_TIME_PERIOD_CALC_FPS_US	1000000
 
+#ifdef CONFIG_MACH_ASUS_X00TD
+#define WAIT_RESUME_TIMEOUT 200
+#endif
+
 #ifdef CONFIG_MACH_ASUS_SDM660
 #ifdef CONFIG_FOCALTECH_FP
 extern int focal_detect_flag;
@@ -101,6 +105,13 @@ extern int g_resume_from_fp;
 
 static struct fb_info *fbi_list[MAX_FBI_LIST];
 static int fbi_list_index;
+
+#ifdef CONFIG_MACH_ASUS_X00TD
+static struct fb_info *prim_fbi;
+static struct delayed_work prim_panel_work;
+static atomic_t prim_panel_is_on;
+static struct wake_lock prim_panel_wakelock;
+#endif
 
 static u32 mdss_fb_pseudo_palette[16] = {
 	0x00000000, 0xffffffff, 0xffffffff, 0xffffffff,
@@ -146,6 +157,96 @@ static int mdss_fb_send_panel_event(struct msm_fb_data_type *mfd,
 					int event, void *arg);
 static void mdss_fb_set_mdp_sync_pt_threshold(struct msm_fb_data_type *mfd,
 		int type);
+
+#ifdef CONFIG_MACH_ASUS_X00TD
+static void prim_panel_off_delayed_work(struct work_struct *work)
+{
+#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+	console_lock();
+#endif
+	if (!lock_fb_info(prim_fbi))
+	{
+	#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+		console_unlock();
+	#endif
+		return;
+	}
+
+	if (atomic_read(&prim_panel_is_on)) {
+		fb_blank(prim_fbi, FB_BLANK_POWERDOWN);
+		atomic_set(&prim_panel_is_on, false);
+		wake_unlock(&prim_panel_wakelock);
+	}
+
+	unlock_fb_info(prim_fbi);
+#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+	console_unlock();
+#endif
+}
+
+int mdss_prim_panel_fb_unblank(int timeout)
+{
+	int ret = 0;
+	struct msm_fb_data_type *mfd = NULL;
+
+	pr_info("cdfinger mdss_prim_panel_fb_unblank\n");
+
+	if (prim_fbi) {
+		mfd = (struct msm_fb_data_type *)prim_fbi->par;
+		ret = wait_event_timeout(mfd->resume_wait_q,
+			!atomic_read(&mfd->resume_pending),
+			msecs_to_jiffies(WAIT_RESUME_TIMEOUT));
+
+		if (!ret) {
+			pr_info("Primary fb resume timeout\n");
+			return -ETIMEDOUT;
+		}
+
+	#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+		console_lock();
+	#endif
+
+		if (!lock_fb_info(prim_fbi)) {
+		#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+			console_unlock();
+		#endif
+		return -ENODEV;
+		}
+
+		if (prim_fbi->blank == FB_BLANK_UNBLANK) {
+			unlock_fb_info(prim_fbi);
+		#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+			console_unlock();
+		#endif
+
+			return 0;
+		}
+
+		wake_lock(&prim_panel_wakelock);
+		ret = fb_blank(prim_fbi, FB_BLANK_UNBLANK);
+
+		if (!ret) {
+			atomic_set(&prim_panel_is_on, true);
+			if (timeout > 0)
+				schedule_delayed_work(&prim_panel_work, msecs_to_jiffies(timeout));
+			else
+				wake_unlock(&prim_panel_wakelock);
+
+		} else
+			wake_unlock(&prim_panel_wakelock);
+
+		unlock_fb_info(prim_fbi);
+	#ifdef CONFIG_FRAMEBUFFER_CONSOLE
+		console_unlock();
+	#endif
+
+		return ret;
+	}
+
+	pr_err("primary panel is not existed\n");
+	return -EINVAL;
+}
+#endif
 
 static inline void __user *to_user_ptr(uint64_t address)
 {
@@ -2234,6 +2335,16 @@ static int mdss_fb_blank(int blank_mode, struct fb_info *info)
 	struct mdss_panel_data *pdata;
 	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)info->par;
 
+#ifdef CONFIG_MACH_ASUS_X00TD
+	if ((info == prim_fbi) && (blank_mode == FB_BLANK_UNBLANK) &&
+		atomic_read(&prim_panel_is_on)) {
+		atomic_set(&prim_panel_is_on, false);
+		wake_unlock(&prim_panel_wakelock);
+		cancel_delayed_work_sync(&prim_panel_work);
+		return 0;
+	}
+#endif
+
 	ret = mdss_fb_pan_idle(mfd);
 	if (ret) {
 		pr_warn("mdss_fb_pan_idle for fb%d failed. ret=%d\n",
@@ -2870,6 +2981,9 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	atomic_set(&mfd->commits_pending, 0);
 	atomic_set(&mfd->ioctl_ref_cnt, 0);
 	atomic_set(&mfd->kickoff_pending, 0);
+#ifdef CONFIG_MACH_ASUS_X00TD
+	atomic_set(&mfd->resume_pending, 0);
+#endif
 
 	init_timer(&mfd->no_update.timer);
 	mfd->no_update.timer.function = mdss_fb_no_update_notify_timer_cb;
@@ -2885,6 +2999,9 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	init_waitqueue_head(&mfd->idle_wait_q);
 	init_waitqueue_head(&mfd->ioctl_q);
 	init_waitqueue_head(&mfd->kickoff_wait_q);
+#ifdef CONFIG_MACH_ASUS_X00TD
+	init_waitqueue_head(&mfd->resume_wait_q);
+#endif
 
 	ret = fb_alloc_cmap(&fbi->cmap, 256, 0);
 	if (ret)
@@ -2902,6 +3019,15 @@ static int mdss_fb_register(struct msm_fb_data_type *mfd)
 	mdss_panel_debugfs_init(panel_info, panel_name);
 	pr_info("FrameBuffer[%d] %dx%d registered successfully!\n", mfd->index,
 					fbi->var.xres, fbi->var.yres);
+
+#ifdef CONFIG_MACH_ASUS_X00TD
+	if (panel_info->is_prim_panel) {
+		prim_fbi = fbi;
+		atomic_set(&prim_panel_is_on, false);
+		INIT_DELAYED_WORK(&prim_panel_work, prim_panel_off_delayed_work);
+		wake_lock_init(&prim_panel_wakelock, WAKE_LOCK_SUSPEND, "prim_panel_wakelock");
+	}
+#endif
 
 	return 0;
 }
