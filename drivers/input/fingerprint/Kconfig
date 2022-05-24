@@ -34,6 +34,7 @@ if MACH_ASUS_X00TD
 
 config COMMON_FP_X00TD
     bool "Fingerprint common"
+	default n
 	help
 		Say Y here if you use common fp.
 		If unsure, say N.
@@ -41,13 +42,14 @@ config COMMON_FP_X00TD
 config CDFINGER_FP_X00TD
     bool "Fingerprint cdfinger"
 	help
-		Say Y here if you use common fp.
+		Say Y here if you use cdfinger fp.
 		If unsure, say N.
 
 config GOODIX_FP_X00TD
     bool "Fingerprint goodix"
+	select COMMON_FP
 	help
-		Say Y here if you use common fp.
+		Say Y here if you use goodix fp.
 		If unsure, say N.
 
 endif
