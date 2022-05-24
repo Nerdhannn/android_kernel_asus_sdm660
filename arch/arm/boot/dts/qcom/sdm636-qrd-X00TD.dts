@@ -128,15 +128,6 @@
 		pinctrl-2 = <&commonfp_irq_active>;
 	};
 
-	cdfinger_fingerprint {
-		compatible = "cdfinger,fingerprint";
-		interrupt-parent = <&tlmm>;
-		interrupts = <72 0x0>;
-		cdfinger,reset_gpio = <&tlmm 20 0>;
-		cdfinger,gpio_vdd  = <&pm660l_gpios 5 0>;
-		cdfinger,irq_gpio = <&tlmm 72 0>;
-	};
-
 	goodix_fingerprint {
 		compatible = "goodix,fingerprint";
 	};

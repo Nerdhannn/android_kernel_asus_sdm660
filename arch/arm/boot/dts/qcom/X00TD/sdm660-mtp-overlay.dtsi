@@ -1,0 +1,12 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+
+&soc {
+	cdfinger_fingerprint {
+		compatible = "cdfinger,fingerprint";
+		interrupt-parent = <&tlmm>;
+		interrupts = <72 0x0>;
+		vdd-supply = <&pm660l_l3>;
+		cdfinger,reset_gpio = <&tlmm 20 0>;
+		cdfinger,irq_gpio = <&tlmm 72 0>;
+	};
+};

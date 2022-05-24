@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 
 #include "sdm660-regulator-overlay.dtsi"
+#include "sdm660-mtp-overlay.dtsi"
 #include "sdm660-overlay.dtsi"
 #include "sdm660-lpi-overlay.dtsi"
 #include "sdm660-common-overlay.dtsi"
